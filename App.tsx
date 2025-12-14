@@ -25,20 +25,119 @@ import {
   User,
   Sparkles,
   BatteryLow,
-  ShieldAlert
+  ShieldAlert,
+  Volume2,
+  VolumeX,
+  Skull,
+  Crown,
+  Gamepad2
 } from 'lucide-react';
 import { PlayerState, INITIAL_STATS, OBJECTIVES, GameLogEntry } from './types';
 import { StatGauge, ActionCard, LogEntry, Modal } from './components/GameUI';
 
 const MAX_LOGS = 50;
 
+// --- Audio System (Web Audio API) ---
+// We use a simple synthesizer to avoid external assets dependencies
+const playSynthSound = (type: 'success' | 'error' | 'click' | 'sleep' | 'start' | 'levelUp', audioCtx: AudioContext | null) => {
+  if (!audioCtx) return;
+  
+  // Resume context if suspended (browser policy)
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  const now = audioCtx.currentTime;
+
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+
+  if (type === 'success') {
+    // Pleasant ascending chime
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(500, now);
+    osc.frequency.exponentialRampToValueAtTime(1000, now + 0.1);
+    gain.gain.setValueAtTime(0.1, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+    osc.start(now);
+    osc.stop(now + 0.4);
+
+    // Harmony
+    const osc2 = audioCtx.createOscillator();
+    const gain2 = audioCtx.createGain();
+    osc2.connect(gain2);
+    gain2.connect(audioCtx.destination);
+    osc2.type = 'triangle';
+    osc2.frequency.setValueAtTime(750, now); // 5th
+    gain2.gain.setValueAtTime(0.05, now);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+    osc2.start(now);
+    osc2.stop(now + 0.4);
+
+  } else if (type === 'error') {
+    // Low buzz
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(150, now);
+    osc.frequency.linearRampToValueAtTime(100, now + 0.2);
+    gain.gain.setValueAtTime(0.1, now);
+    gain.gain.linearRampToValueAtTime(0.001, now + 0.2);
+    osc.start(now);
+    osc.stop(now + 0.2);
+
+  } else if (type === 'sleep') {
+    // Power down effect
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(400, now);
+    osc.frequency.exponentialRampToValueAtTime(50, now + 1);
+    gain.gain.setValueAtTime(0.1, now);
+    gain.gain.linearRampToValueAtTime(0.001, now + 1);
+    osc.start(now);
+    osc.stop(now + 1);
+
+  } else if (type === 'start') {
+    // Power up / Start game
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(200, now);
+    osc.frequency.exponentialRampToValueAtTime(600, now + 0.4);
+    gain.gain.setValueAtTime(0.05, now);
+    gain.gain.linearRampToValueAtTime(0.001, now + 0.4);
+    osc.start(now);
+    osc.stop(now + 0.4);
+
+  } else if (type === 'levelUp') {
+    // Victory fanfare (simple)
+    const playNote = (freq: number, time: number, duration: number) => {
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.connect(g);
+      g.connect(audioCtx.destination);
+      o.type = 'sine';
+      o.frequency.value = freq;
+      g.gain.setValueAtTime(0.1, time);
+      g.gain.linearRampToValueAtTime(0.001, time + duration);
+      o.start(time);
+      o.stop(time + duration);
+    };
+    playNote(523.25, now, 0.2); // C5
+    playNote(659.25, now + 0.2, 0.2); // E5
+    playNote(783.99, now + 0.4, 0.4); // G5
+  }
+};
+
+
 export default function App() {
   // --- State ---
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
   const [showDaySummary, setShowDaySummary] = useState(false);
   const [summaryData, setSummaryData] = useState<string[]>([]);
   
+  // Audio Context Ref
+  const audioCtxRef = useRef<AudioContext | null>(null);
+
   const [player, setPlayer] = useState<PlayerState>({
     name: '',
     stats: { ...INITIAL_STATS },
@@ -63,6 +162,17 @@ export default function App() {
 
   // --- Effects ---
 
+  // Initialize Audio Context on first interaction
+  useEffect(() => {
+    // We don't init here to avoid strict browser autoplay policies
+    // We init in handleStartGame or first interaction
+    return () => {
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close();
+      }
+    };
+  }, []);
+
   // Handle Dark Mode
   useEffect(() => {
     if (isDarkMode) {
@@ -85,6 +195,7 @@ export default function App() {
     
     const allStatsMaxed = Object.values(player.stats).every(val => (val as number) >= 100);
     if (allStatsMaxed) {
+      playSound('levelUp');
       setPlayer(p => ({...p, gameWon: true}));
     }
   }, [player.stats, player.gameWon]);
@@ -96,6 +207,21 @@ export default function App() {
     : OBJECTIVES[currentObjectiveIndex];
 
   // --- Helpers ---
+
+  const initAudio = () => {
+    if (!audioCtxRef.current && typeof window !== 'undefined') {
+      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioContext) {
+        audioCtxRef.current = new AudioContext();
+      }
+    }
+  };
+
+  const playSound = (type: 'success' | 'error' | 'click' | 'sleep' | 'start' | 'levelUp') => {
+    if (isMuted) return;
+    initAudio(); // Ensure init
+    playSynthSound(type, audioCtxRef.current);
+  };
 
   const addLog = (text: string, type: 'info' | 'success' | 'warning' | 'danger' = 'info') => {
     setLogs(prev => {
@@ -109,9 +235,15 @@ export default function App() {
     setIsDarkMode(!isDarkMode);
   };
 
+  const toggleMute = () => {
+    setIsMuted(!isMuted);
+  };
+
   // --- Core Mechanics ---
 
   const handleStartGame = (name: string) => {
+    initAudio();
+    playSound('start');
     setPlayer(p => ({ ...p, name }));
     setHasStarted(true);
     addLog(`Bienvenue, ${name}. Votre voyage vers une vie meilleure commence.`, 'info');
@@ -132,11 +264,13 @@ export default function App() {
     isSport: boolean = false
   ) => {
     if (player.energy < energyCost) {
+      playSound('error');
       addLog("Pas assez d'énergie ! Reposez-vous.", 'warning');
       return;
     }
 
     if (isSport && player.injuredUntilDay && player.injuredUntilDay > player.day) {
+      playSound('error');
       addLog("Vous êtes blessé ! Impossible de faire du sport.", 'danger');
       return;
     }
@@ -146,6 +280,7 @@ export default function App() {
       const roll = Math.random() * 100;
       
       if (roll < risk) {
+        playSound('error');
         addLog(`Aïe ! Vous vous êtes blessé en forçant trop (${Math.round(risk)}% risque).`, 'danger');
         addLog("Repos forcé pour le sport pendant 5 jours.", 'danger');
         setPlayer(prev => ({
@@ -161,6 +296,7 @@ export default function App() {
       }
     }
 
+    playSound('success');
     setPlayer(prev => {
       const changes = effects(prev);
       const newStats = { ...prev.stats, ...(changes.stats || {}) };
@@ -182,6 +318,7 @@ export default function App() {
   };
 
   const endDay = () => {
+    playSound('sleep');
     const summary: string[] = [];
     let healthChange = 0;
     let wellbeingChange = 0;
@@ -293,26 +430,26 @@ export default function App() {
         </div>
       );
     }
-    // 2. Low Wellbeing
+    // 2. Low Wellbeing (< 20)
     if (player.stats.wellbeing < 20) {
       return (
-        <div className="w-24 h-24 lg:w-32 lg:h-32 rounded-full bg-gradient-to-br from-indigo-400 to-slate-600 flex items-center justify-center shadow-lg shadow-indigo-200 dark:shadow-indigo-900/20 ring-4 ring-white dark:ring-slate-800 transition-transform hover:scale-105">
-          <BatteryLow size={48} className="text-white drop-shadow-md lg:w-16 lg:h-16" strokeWidth={1.5} />
+        <div className="w-24 h-24 lg:w-32 lg:h-32 rounded-full bg-gradient-to-br from-slate-600 to-slate-800 flex items-center justify-center shadow-lg shadow-slate-200 dark:shadow-slate-900/20 ring-4 ring-white dark:ring-slate-800 transition-transform hover:scale-105">
+          <Skull size={48} className="text-white drop-shadow-md lg:w-16 lg:h-16" strokeWidth={1.5} />
         </div>
       );
     }
-    // 3. High Wellbeing
+    // 3. High Wellbeing (> 70)
     if (player.stats.wellbeing > 70) {
       return (
-        <div className="w-24 h-24 lg:w-32 lg:h-32 rounded-full bg-gradient-to-br from-orange-400 to-amber-500 flex items-center justify-center shadow-lg shadow-orange-200 dark:shadow-orange-900/20 ring-4 ring-white dark:ring-slate-800 transition-transform hover:scale-105">
-          <Sparkles size={48} className="text-white drop-shadow-md lg:w-16 lg:h-16" strokeWidth={1.5} />
+        <div className="w-24 h-24 lg:w-32 lg:h-32 rounded-full bg-gradient-to-br from-yellow-400 to-amber-500 flex items-center justify-center shadow-lg shadow-orange-200 dark:shadow-orange-900/20 ring-4 ring-white dark:ring-slate-800 transition-transform hover:scale-105">
+          <Crown size={48} className="text-white drop-shadow-md lg:w-16 lg:h-16" strokeWidth={1.5} />
         </div>
       );
     }
     // 4. Normal
     return (
-      <div className="w-24 h-24 lg:w-32 lg:h-32 rounded-full bg-gradient-to-br from-slate-300 to-slate-400 dark:from-slate-700 dark:to-slate-600 flex items-center justify-center shadow-lg shadow-slate-200 dark:shadow-slate-900/20 ring-4 ring-white dark:ring-slate-800 transition-transform hover:scale-105">
-        <User size={48} className="text-white drop-shadow-md lg:w-16 lg:h-16" strokeWidth={1.5} />
+      <div className="w-24 h-24 lg:w-32 lg:h-32 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-200 dark:shadow-blue-900/20 ring-4 ring-white dark:ring-slate-800 transition-transform hover:scale-105">
+        <Gamepad2 size={48} className="text-white drop-shadow-md lg:w-16 lg:h-16" strokeWidth={1.5} />
       </div>
     );
   };
@@ -339,13 +476,22 @@ export default function App() {
          </div>
          <span className="font-black text-xl tracking-tight text-slate-800 dark:text-white">LEVEL UP</span>
        </div>
-       <button 
-        onClick={toggleTheme}
-        className="p-2.5 rounded-xl bg-white dark:bg-slate-800 text-slate-600 dark:text-yellow-400 border border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-md transition-all active:scale-95"
-        title={isDarkMode ? "Passer en mode clair" : "Passer en mode sombre"}
-      >
-        {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
-      </button>
+       <div className="flex items-center gap-2">
+         <button 
+          onClick={toggleMute}
+          className={`p-2.5 rounded-xl border shadow-sm hover:shadow-md transition-all active:scale-95 ${isMuted ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-700' : 'bg-white dark:bg-slate-800 text-primary border-slate-200 dark:border-slate-700'}`}
+          title={isMuted ? "Activer le son" : "Couper le son"}
+        >
+          {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+        </button>
+         <button 
+          onClick={toggleTheme}
+          className="p-2.5 rounded-xl bg-white dark:bg-slate-800 text-slate-600 dark:text-yellow-400 border border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-md transition-all active:scale-95"
+          title={isDarkMode ? "Passer en mode clair" : "Passer en mode sombre"}
+        >
+          {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+        </button>
+       </div>
     </header>
   );
 
