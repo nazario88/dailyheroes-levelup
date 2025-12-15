@@ -18,10 +18,12 @@ export interface PlayerState {
   hasAddiction: boolean; 
   addictionRecoveryProgress: number; // 0 to 3. Needs 3 to be cured.
   injuredUntilDay: number | null; // If set, cannot do sport until this day
+  muscleFatigue: boolean; // New state: prevents sport if overtrained
   motivation: 'low' | 'normal' | 'high'; 
   
   // Logic Trackers
   daysSinceLastSocial: number; // Increases every day, reset on social action
+  sportActionsYesterday: number; // Tracks history for fatigue logic
 
   // Daily Trackers (reset each day)
   actionsPerformedToday: number;

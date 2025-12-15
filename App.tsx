@@ -30,7 +30,8 @@ import {
   VolumeX,
   Skull,
   Crown,
-  Gamepad2
+  Gamepad2,
+  Anchor
 } from 'lucide-react';
 import { PlayerState, INITIAL_STATS, OBJECTIVES, GameLogEntry } from './types';
 import { StatGauge, ActionCard, LogEntry, Modal } from './components/GameUI';
@@ -148,8 +149,10 @@ export default function App() {
     hasAddiction: true,
     addictionRecoveryProgress: 0,
     injuredUntilDay: null,
+    muscleFatigue: false,
     motivation: 'normal',
     daysSinceLastSocial: 0,
+    sportActionsYesterday: 0,
     gameWon: false,
     actionsPerformedToday: 0,
     sportActionsToday: 0,
@@ -269,10 +272,17 @@ export default function App() {
       return;
     }
 
-    if (isSport && player.injuredUntilDay && player.injuredUntilDay > player.day) {
-      playSound('error');
-      addLog("Vous êtes blessé ! Impossible de faire du sport.", 'danger');
-      return;
+    if (isSport) {
+      if (player.injuredUntilDay && player.injuredUntilDay > player.day) {
+        playSound('error');
+        addLog("Vous êtes blessé ! Impossible de faire du sport.", 'danger');
+        return;
+      }
+      if (player.muscleFatigue) {
+        playSound('error');
+        addLog("Vos muscles sont tétanisés. Reposez-vous aujourd'hui.", 'danger');
+        return;
+      }
     }
 
     if (isSport) {
@@ -343,7 +353,23 @@ export default function App() {
       wellbeingChange -= 2;
     }
 
-    // 3. Social Decay
+    // 3. Muscle Fatigue Check
+    let nextMuscleFatigue = false;
+    if (player.sportActionsToday >= 2) {
+      summary.push("Vous avez forcé sur le sport (2 fois/jour). Courbatures garanties demain !");
+      nextMuscleFatigue = true;
+    } else if (player.sportActionsToday > 0 && player.sportActionsYesterday > 0) {
+      summary.push("Deux jours de sport d'affilée... Vos muscles réclament une pause.");
+      nextMuscleFatigue = true;
+    }
+
+    if (nextMuscleFatigue && !player.muscleFatigue) {
+       // Only warn if it wasn't already the case
+    } else if (player.muscleFatigue && !nextMuscleFatigue) {
+       summary.push("Vos muscles ont récupéré. Prêt pour le sport !");
+    }
+
+    // 4. Social Decay
     const newDaysSinceSocial = player.daysSinceLastSocial + 1;
     if (newDaysSinceSocial >= 5) {
       summary.push("L'isolement social vous pèse (-20 Social).");
@@ -352,7 +378,7 @@ export default function App() {
 
     summary.push("Une bonne nuit de sommeil remet l'énergie à 100.");
     
-    // 4. Random Events / Mood (Buffed by Wellbeing)
+    // 5. Random Events / Mood (Buffed by Wellbeing)
     const moodRoll = Math.random();
     let newMotivation: PlayerState['motivation'] = 'normal';
     
@@ -375,7 +401,7 @@ export default function App() {
       }
     }
 
-    // 5. Stat Decay (Entropy)
+    // 6. Stat Decay (Entropy)
     if (player.day % 3 === 0) { 
       summary.push("Vos compétences diminuent légèrement par manque de pratique.");
     }
@@ -399,6 +425,8 @@ export default function App() {
         daysSinceLastSocial: newDaysSinceSocial,
         energy: prev.maxEnergy,
         motivation: newMotivation,
+        muscleFatigue: nextMuscleFatigue,
+        sportActionsYesterday: prev.sportActionsToday,
         stats,
         actionsPerformedToday: 0,
         sportActionsToday: 0,
@@ -611,6 +639,11 @@ export default function App() {
                     <AlertTriangle size={16} /> Blessé ({player.injuredUntilDay - player.day}j restants)
                   </div>
                 )}
+                 {player.muscleFatigue && (
+                  <div className="text-xs bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-900/30 text-indigo-600 dark:text-indigo-400 px-3 py-2.5 rounded-xl flex items-center gap-2 font-bold">
+                    <Dumbbell size={16} /> Fatigue Musculaire (Repos requis)
+                  </div>
+                )}
                  {player.motivation === 'low' && (
                   <div className="text-xs bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-900/30 text-blue-600 dark:text-blue-400 px-3 py-2.5 rounded-xl flex items-center gap-2 font-bold">
                     <Frown size={16} /> Motivation faible
@@ -673,8 +706,8 @@ export default function App() {
                   cost={20}
                   icon={PersonStanding}
                   color="text-orange-500"
-                  disabledReason={player.injuredUntilDay && player.injuredUntilDay > player.day ? "Blessure en cours" : false}
-                  disabled={!!(player.injuredUntilDay && player.injuredUntilDay > player.day)}
+                  disabledReason={player.injuredUntilDay && player.injuredUntilDay > player.day ? "Blessure en cours" : player.muscleFatigue ? "Fatigue musculaire" : false}
+                  disabled={!!((player.injuredUntilDay && player.injuredUntilDay > player.day) || player.muscleFatigue)}
                   onClick={() => performAction(
                     "Cardio", 20, 
                     (p) => ({ stats: { ...p.stats, sport: p.stats.sport + 10, wellbeing: p.stats.wellbeing + 5 } }),
@@ -689,8 +722,8 @@ export default function App() {
                   cost={30}
                   icon={Dumbbell}
                   color="text-red-500"
-                  disabledReason={player.injuredUntilDay && player.injuredUntilDay > player.day ? "Blessure en cours" : false}
-                  disabled={!!(player.injuredUntilDay && player.injuredUntilDay > player.day)}
+                  disabledReason={player.injuredUntilDay && player.injuredUntilDay > player.day ? "Blessure en cours" : player.muscleFatigue ? "Fatigue musculaire" : false}
+                  disabled={!!((player.injuredUntilDay && player.injuredUntilDay > player.day) || player.muscleFatigue)}
                   onClick={() => performAction(
                     "Muscu", 30, 
                     (p) => ({ stats: { ...p.stats, sport: p.stats.sport + 5 } }),
